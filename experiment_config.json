@@ -1,0 +1,86 @@
+{
+  "experiment_name": "RTX_5090_Optimization_Study",
+  "description": "Comprehensive optimization experiments for RTX 5090 training",
+  
+  "hardware": {
+    "target_gpu": "RTX 5090",
+    "max_memory_gb": 24.0,
+    "memory_safety_margin": 0.85
+  },
+  
+  "training": {
+    "max_training_time_minutes": 30,
+    "warmup_steps_ratio": 0.1,
+    "gradient_clip": 1.0,
+    "use_amp": true
+  },
+  
+  "optimizations": {
+    "use_fp4_quantization": true,
+    "use_grouped_query_attention": true,
+    "use_flash_attention": true,
+    "use_gradient_checkpointing": true,
+    "quantize_embeddings": false
+  },
+  
+  "model_configs": [
+    {
+      "name": "Small",
+      "d_model": 512,
+      "n_heads": 8,
+      "n_layers": 8,
+      "d_ff": 2048,
+      "batch_size": 32,
+      "max_seq_len": 512
+    },
+    {
+      "name": "Medium", 
+      "d_model": 768,
+      "n_heads": 12,
+      "n_layers": 12,
+      "d_ff": 3072,
+      "batch_size": 24,
+      "max_seq_len": 512
+    },
+    {
+      "name": "Large",
+      "d_model": 1024,
+      "n_heads": 16,
+      "n_layers": 16,
+      "d_ff": 4096,
+      "batch_size": 16,
+      "max_seq_len": 512
+    },
+    {
+      "name": "XLarge",
+      "d_model": 1280,
+      "n_heads": 20,
+      "n_layers": 20,
+      "d_ff": 5120,
+      "batch_size": 12,
+      "max_seq_len": 512
+    }
+  ],
+  
+  "data": {
+    "dataset_name": "HuggingFaceTB/smollm-corpus",
+    "dataset_config": "cosmopedia-v2",
+    "num_documents": 2000,
+    "max_tokens": 500000,
+    "cache_dir": "data_cache"
+  },
+  
+  "output": {
+    "results_dir": "experiment_results",
+    "save_models": false,
+    "generate_plots": true
+  },
+  
+  "research_notes": {
+    "fp4_quantization": "Selective quantization of linear layers > 1000 params, skipping embeddings and norms",
+    "grouped_query_attention": "4:1 ratio (n_kv_heads = n_heads // 4) for memory efficiency",
+    "memory_optimization": "Gradient checkpointing + automatic batch sizing + mixed precision",
+    "expected_memory_savings": "70-80% with combined optimizations",
+    "expected_speed_improvement": "20-35% throughput increase"
+  }
+}
