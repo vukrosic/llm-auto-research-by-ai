@@ -29,6 +29,15 @@ import math
 import warnings
 warnings.filterwarnings('ignore')
 
+# Try to import pynvml for GPU monitoring
+try:
+    import pynvml
+    PYNVML_AVAILABLE = True
+except ImportError:
+    PYNVML_AVAILABLE = False
+    print("⚠️ pynvml not available. Install with: pip install pynvml")
+    print("   GPU utilization monitoring will use fallback method")
+
 # Import base components
 from llm import (
     ModelConfig, MinimalLLM, TextTokenDataset, load_and_cache_data,
@@ -127,6 +136,144 @@ class MemoryMonitor:
         self.current_memory = 0
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
+
+class DynamicResourceOptimizer:
+    """Dynamically optimize hyperparameters to maximize GPU utilization"""
+    
+    def __init__(self, target_memory_utilization: float = 0.90, target_gpu_utilization: float = 0.95):
+        self.target_memory_util = target_memory_utilization
+        self.target_gpu_util = target_gpu_utilization
+        self.adjustment_history = []
+        
+    def get_gpu_utilization(self) -> float:
+        """Get current GPU utilization percentage"""
+        if PYNVML_AVAILABLE:
+            try:
+                pynvml.nvmlInit()
+                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                return util.gpu / 100.0
+            except:
+                pass
+        
+        # Fallback: estimate from memory usage
+        if torch.cuda.is_available():
+            return torch.cuda.memory_allocated() / torch.cuda.get_device_properties(0).total_memory
+        return 0.0
+    
+    def get_memory_utilization(self) -> float:
+        """Get current memory utilization percentage"""
+        if torch.cuda.is_available():
+            return torch.cuda.memory_allocated() / torch.cuda.get_device_properties(0).total_memory
+        return 0.0
+    
+    def optimize_batch_size_and_seq_len(self, model_config: ModelConfig, model: nn.Module, 
+                                      sample_batch, device, use_gqa: bool = False, 
+                                      n_kv_heads: Optional[int] = None) -> Tuple[int, int]:
+        """Dynamically find optimal batch size and sequence length"""
+        
+        print("🔧 Optimizing batch size and sequence length for maximum GPU utilization...")
+        
+        original_batch_size = model_config.batch_size
+        original_seq_len = model_config.max_seq_len
+        
+        best_batch_size = original_batch_size
+        best_seq_len = original_seq_len
+        best_throughput = 0
+        
+        # Test different combinations
+        batch_sizes = [8, 12, 16, 20, 24, 28, 32, 40, 48, 56, 64]
+        seq_lengths = [256, 384, 512, 640, 768, 896, 1024]
+        
+        for batch_size in batch_sizes:
+            for seq_len in seq_lengths:
+                try:
+                    # Clear memory
+                    torch.cuda.empty_cache()
+                    gc.collect()
+                    
+                    # Create test batch
+                    test_x = torch.randint(0, model_config.vocab_size, (batch_size, seq_len)).to(device)
+                    test_y = torch.randint(0, model_config.vocab_size, (batch_size, seq_len)).to(device)
+                    
+                    # Test forward pass
+                    model.train()
+                    start_time = time.time()
+                    
+                    with torch.cuda.amp.autocast():
+                        logits = model(test_x)
+                        loss = F.cross_entropy(logits.view(-1, model_config.vocab_size), test_y.view(-1))
+                        loss.backward()
+                    
+                    torch.cuda.synchronize()
+                    forward_time = time.time() - start_time
+                    
+                    # Check memory usage
+                    memory_util = self.get_memory_utilization()
+                    gpu_util = self.get_gpu_utilization()
+                    
+                    # Calculate throughput (tokens per second)
+                    tokens_processed = batch_size * seq_len
+                    throughput = tokens_processed / forward_time
+                    
+                    # Check if this configuration is viable
+                    if memory_util < self.target_memory_util and gpu_util > 0.5:  # Minimum GPU usage
+                        if throughput > best_throughput:
+                            best_throughput = throughput
+                            best_batch_size = batch_size
+                            best_seq_len = seq_len
+                            
+                        print(f"   ✓ Batch: {batch_size}, SeqLen: {seq_len}, "
+                              f"Memory: {memory_util:.1%}, GPU: {gpu_util:.1%}, "
+                              f"Throughput: {throughput:.0f} tok/s")
+                    else:
+                        if memory_util >= self.target_memory_util:
+                            # Memory limit reached, try smaller configurations
+                            break
+                            
+                    # Clear gradients
+                    model.zero_grad()
+                    del test_x, test_y, logits, loss
+                    
+                except RuntimeError as e:
+                    if "out of memory" in str(e).lower():
+                        # OOM, try smaller configurations
+                        torch.cuda.empty_cache()
+                        break
+                    else:
+                        print(f"   ❌ Error with batch: {batch_size}, seq_len: {seq_len}: {e}")
+                        continue
+                        
+        print(f"🎯 Optimal configuration: Batch size: {best_batch_size}, Seq length: {best_seq_len}")
+        print(f"   Expected throughput: {best_throughput:.0f} tokens/s")
+        
+        return best_batch_size, best_seq_len
+    
+    def monitor_and_adjust_during_training(self, step: int, total_steps: int) -> Dict[str, Any]:
+        """Monitor resource usage during training and suggest adjustments"""
+        
+        memory_util = self.get_memory_utilization()
+        gpu_util = self.get_gpu_utilization()
+        
+        suggestions = {
+            "memory_utilization": memory_util,
+            "gpu_utilization": gpu_util,
+            "adjustments": []
+        }
+        
+        # Memory utilization feedback
+        if memory_util < 0.7:
+            suggestions["adjustments"].append("Consider increasing batch size or sequence length")
+        elif memory_util > 0.95:
+            suggestions["adjustments"].append("Memory usage high - consider reducing batch size")
+            
+        # GPU utilization feedback
+        if gpu_util < 0.8:
+            suggestions["adjustments"].append("GPU underutilized - consider larger model or batch size")
+        elif gpu_util > 0.98:
+            suggestions["adjustments"].append("GPU fully utilized - optimal performance")
+            
+        return suggestions
 
 def get_gpu_memory_info() -> Dict[str, float]:
     """Get current GPU memory information"""
@@ -445,18 +592,41 @@ class ExperimentRunner:
         memory_monitor = MemoryMonitor()
         memory_monitor.reset()
         
+        # Initialize dynamic resource optimizer
+        resource_optimizer = DynamicResourceOptimizer()
+        
         try:
             # Create model config
             model_config = ModelConfig(**base_config)
             
-            # Optimize batch size for memory
+            # Create model first for dynamic optimization
             n_kv_heads = max(1, model_config.n_heads // 4) if use_gqa else None
-            optimal_batch = find_optimal_batch_size(
-                model_config, self.exp_config.max_memory_gb, use_gqa, n_kv_heads
+            set_seed(42)
+            model = OptimizedLLM(
+                model_config, 
+                use_gqa=use_gqa, 
+                n_kv_heads=n_kv_heads,
+                use_gradient_checkpointing=self.exp_config.use_gradient_checkpointing
             )
-            model_config.batch_size = optimal_batch
             
-            self.log(f"   Optimized batch size: {optimal_batch}")
+            # Apply FP4 quantization if requested
+            if use_fp4:
+                model = apply_fp4_quantization(model, quantize_embeddings=False)
+                
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            model = model.to(device)
+            
+            # Dynamic optimization of batch size and sequence length
+            sample_batch = torch.randint(0, model_config.vocab_size, (1, model_config.max_seq_len)).to(device)
+            optimal_batch, optimal_seq_len = resource_optimizer.optimize_batch_size_and_seq_len(
+                model_config, model, sample_batch, device, use_gqa, n_kv_heads
+            )
+            
+            # Update model config with optimized values
+            model_config.batch_size = optimal_batch
+            model_config.max_seq_len = optimal_seq_len
+            
+            self.log(f"   🎯 Optimized batch size: {optimal_batch}, seq length: {optimal_seq_len}")
             
             # Load data (cached)
             texts, tokenizer, tokens = load_and_cache_data(model_config)
@@ -529,6 +699,8 @@ class ExperimentRunner:
             
             pbar = tqdm(total=max_steps, desc=f"Exp {exp_id}")
             
+            resource_stats = []
+            
             while step < max_steps and (time.time() - start_time) < max_training_seconds:
                 for batch_idx, (x, y) in enumerate(train_loader):
                     if step >= max_steps or (time.time() - start_time) >= max_training_seconds:
@@ -552,11 +724,25 @@ class ExperimentRunner:
                     
                     memory_monitor.update()
                     
+                    # Monitor resource usage every 50 steps
+                    if step % 50 == 0:
+                        resource_info = resource_optimizer.monitor_and_adjust_during_training(step, max_steps)
+                        resource_stats.append({
+                            'step': step,
+                            'memory_util': resource_info['memory_utilization'],
+                            'gpu_util': resource_info['gpu_utilization'],
+                            'suggestions': resource_info['adjustments']
+                        })
+                    
                     if step % 100 == 0:
                         avg_loss = total_loss / max(1, step + 1)
+                        mem_util = resource_optimizer.get_memory_utilization()
+                        gpu_util = resource_optimizer.get_gpu_utilization()
+                        
                         pbar.set_postfix({
                             'loss': f'{avg_loss:.4f}',
-                            'mem': f'{memory_monitor.current_memory:.1f}GB'
+                            'mem': f'{memory_monitor.current_memory:.1f}GB ({mem_util:.0%})',
+                            'gpu': f'{gpu_util:.0%}'
                         })
                         
                     step += 1
@@ -570,6 +756,10 @@ class ExperimentRunner:
             final_eval = evaluate_model(model, val_loader, model_config)
             memory_stats = memory_monitor.get_stats()
             
+            # Calculate average resource utilization
+            avg_memory_util = sum(r['memory_util'] for r in resource_stats) / max(1, len(resource_stats))
+            avg_gpu_util = sum(r['gpu_util'] for r in resource_stats) / max(1, len(resource_stats))
+            
             # Collect results
             result = {
                 'experiment_id': exp_id,
@@ -582,7 +772,8 @@ class ExperimentRunner:
                 },
                 'model_stats': {
                     'total_parameters': total_params,
-                    'optimal_batch_size': optimal_batch
+                    'optimal_batch_size': optimal_batch,
+                    'optimal_seq_length': optimal_seq_len
                 },
                 'training_stats': {
                     'training_time_seconds': training_time,
@@ -592,15 +783,23 @@ class ExperimentRunner:
                 },
                 'evaluation': final_eval,
                 'memory_stats': memory_stats,
+                'resource_utilization': {
+                    'avg_memory_utilization': avg_memory_util,
+                    'avg_gpu_utilization': avg_gpu_util,
+                    'peak_memory_utilization': memory_stats['memory_utilization'],
+                    'resource_optimization_applied': True
+                },
                 'throughput': {
                     'steps_per_second': step / training_time,
                     'tokens_per_second': total_tokens / training_time
-                }
+                },
+                'resource_monitoring': resource_stats[-5:] if resource_stats else []  # Last 5 measurements
             }
             
             self.log(f"   ✅ Completed - Loss: {final_eval['val_loss']:.4f}, "
-                    f"Memory: {memory_stats['peak_memory_gb']:.1f}GB, "
-                    f"Time: {training_time:.1f}s")
+                    f"Memory: {memory_stats['peak_memory_gb']:.1f}GB ({avg_memory_util:.0%}), "
+                    f"GPU: {avg_gpu_util:.0%}, Time: {training_time:.1f}s, "
+                    f"Throughput: {total_tokens / training_time:.0f} tok/s")
             
             return result
             
