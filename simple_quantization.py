@@ -122,15 +122,10 @@ class SimpleTransformer(nn.Module):
     
     def _apply_fp8_quantization(self):
         """Convert model to FP8 where supported"""
-        if HAS_FP8:
-            # For FP8, we need to be more careful about dtype compatibility
-            # Convert the entire model to FP16 first, then selectively use FP8 in forward pass
-            self.half()
-            self._use_fp8 = True
-        else:
-            # Fallback to FP16
-            self.half()
-            self._use_fp8 = False
+        # For now, just use FP16 as FP8 can be numerically unstable
+        # True FP8 requires careful scaling and is better handled by specialized libraries
+        self.half()
+        self._use_fp8 = False
     
     def forward(self, x):
         x = self.embedding(x)
@@ -216,7 +211,7 @@ def run_quantization_test():
     
     # Add FP8 if supported
     if HAS_FP8:
-        configs.append(("FP8 (Native)", create_fp8_model))
+        configs.append(("FP16 (FP8 fallback)", create_fp8_model))
     else:
         configs.append(("FP8 (FP16 fallback)", create_fp8_model))
     
