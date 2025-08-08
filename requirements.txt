@@ -1,12 +1,5 @@
 torch
-datasets
 transformers
-streamlit
-plotly
-pandas
-matplotlib
-seaborn
+datasets
 tqdm
-psutil
-pynvml
 bitsandbytes
