@@ -41,8 +41,7 @@ def check_files_exist() -> bool:
         "experiment_pipeline.py",
         "llm.py", 
         "check_system.py",
-        "experiment_config.json",
-        "requirements.txt"
+        "experiment_config.json"
     ]
     
     missing_files = []
