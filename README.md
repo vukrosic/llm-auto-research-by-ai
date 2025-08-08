@@ -143,13 +143,45 @@ pip install transformers datasets tqdm numpy bitsandbytes
 - CUDA 12.1+ compatible GPU
 - 32GB+ system RAM recommended
 
+## 🌐 Interactive Dashboard
+
+The Streamlit dashboard provides an intuitive way to explore and understand your optimization experiments:
+
+### Dashboard Features
+
+- **📚 Overview Tab**: Explains optimization techniques with visual examples
+- **📊 Memory Analysis**: Interactive charts showing memory usage and savings
+- **⚡ Performance Tab**: Training speed and model quality comparisons  
+- **🎯 Efficiency Tab**: Memory vs speed scatter plots with parameter sizing
+- **📋 Detailed Results**: Sortable table with all experiment metrics
+- **💡 Insights Tab**: Key findings and personalized recommendations
+
+### Dashboard Screenshots
+
+The dashboard includes:
+- **Interactive filters** in the sidebar to focus on specific configurations
+- **Hover tooltips** with detailed information on all charts
+- **Responsive design** that works on different screen sizes
+- **Export capabilities** for charts and data tables
+- **Real-time updates** when new experiment results are available
+
+### Visual Explanations
+
+- **Memory Usage Charts**: Bar charts comparing peak memory across optimizations
+- **Performance Scatter Plots**: Efficiency analysis with bubble sizing by parameters
+- **Savings Analysis**: Percentage improvements over baseline configurations
+- **Quality vs Speed Trade-offs**: Interactive exploration of optimization impacts
+
 ## 📁 Project Structure
 
 ```
 ├── run_experiments.py          # 🚀 Main launcher (START HERE)
+├── streamlit_dashboard.py      # 🌐 Interactive dashboard
+├── launch_dashboard.py         # 🎛️ Dashboard launcher
 ├── experiment_pipeline.py      # 🧪 Core experiment runner
 ├── llm.py                     # 📚 Original baseline model
 ├── check_system.py            # 🔍 System compatibility checker
+├── visualize_results.py        # 📈 Static plot generator
 ├── experiment_config.json     # ⚙️ Experiment configuration
 ├── requirements.txt           # 📦 Python dependencies
 └── README.md                  # 📖 This file
@@ -158,14 +190,28 @@ pip install transformers datasets tqdm numpy bitsandbytes
 experiment_results/
 ├── experiment_log.txt          # Detailed training logs
 ├── experiment_results.json     # Raw experiment data
-└── experiment_report.md        # Summary report with tables
+├── experiment_report.md        # Summary report with tables
+└── *.png                      # Generated visualization plots
 
 data_cache/                     # Cached datasets (auto-generated)
 ```
 
 ## 🎯 Usage Examples
 
-### Run Full Pipeline
+### Run Full Pipeline with Interactive Dashboard
+```bash
+python run_experiments.py
+```
+This will run all experiments and optionally launch an interactive Streamlit dashboard.
+
+### Launch Interactive Dashboard Only (after experiments)
+```bash
+streamlit run streamlit_dashboard.py
+# or
+python launch_dashboard.py
+```
+
+### Run Experiments Only
 ```bash
 python experiment_pipeline.py
 ```
@@ -225,18 +271,34 @@ The original implementation features:
 
 1. **Install Dependencies**
    ```bash
+   pip install -r requirements.txt
+   # or manually:
    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-   pip install transformers datasets tqdm numpy bitsandbytes
+   pip install transformers datasets tqdm numpy bitsandbytes streamlit plotly pandas
    ```
 
-2. **Run Experiments**
+2. **Check System Compatibility**
    ```bash
-   python experiment_pipeline.py
+   python check_system.py
    ```
 
-3. **View Results**
+3. **Run Complete Pipeline**
    ```bash
+   python run_experiments.py
+   ```
+   This will:
+   - ✅ Check system compatibility
+   - 🧪 Run all optimization experiments
+   - 📊 Generate visualizations
+   - 🌐 Optionally launch interactive dashboard
+
+4. **Explore Results**
+   ```bash
+   # View static report
    cat experiment_results/experiment_report.md
+   
+   # Launch interactive dashboard
+   streamlit run streamlit_dashboard.py
    ```
 
 ## 🎯 Key Features

@@ -140,6 +140,16 @@ def main():
     print(f"📊 View full report: experiment_results/experiment_report.md")
     print(f"📈 Raw data: experiment_results/experiment_results.json")
     
+    # Ask if user wants to launch dashboard
+    print("\n" + "="*50)
+    print("OPTIONAL: Interactive Dashboard")
+    print("="*50)
+    
+    response = input("🌐 Launch interactive Streamlit dashboard? (Y/n): ").lower().strip()
+    if response != 'n':
+        print("🚀 Launching dashboard...")
+        run_command("python launch_dashboard.py", "Starting Streamlit dashboard")
+    
     return 0
 
 if __name__ == "__main__":
