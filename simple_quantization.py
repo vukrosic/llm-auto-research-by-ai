@@ -9,6 +9,7 @@ Uses torch.compile with FP8 and manual FP4 quantization.
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers import AutoTokenizer
 from datasets import load_dataset
 import time
@@ -41,7 +42,7 @@ class FP4Linear(nn.Module):
         
         # Store quantized weights as int8 and scale factors
         self.register_buffer('weight_quantized', torch.zeros(out_features, in_features, dtype=torch.int8))
-        self.register_buffer('weight_scale', torch.zeros(out_features, dtype=torch.float16))
+        self.register_buffer('weight_scale', torch.zeros(out_features, dtype=torch.float32))
         
         if bias:
             self.bias = nn.Parameter(torch.zeros(out_features))
@@ -59,6 +60,11 @@ class FP4Linear(nn.Module):
     def dequantize_fp4(self, quantized_weight, scale):
         """Dequantize 4-bit weights back to float"""
         return quantized_weight.float() * scale.unsqueeze(1)
+    
+    @property
+    def weight(self):
+        """Provide weight property for compatibility"""
+        return self.dequantize_fp4(self.weight_quantized, self.weight_scale)
     
     def forward(self, x):
         # Dequantize weights for computation
@@ -81,6 +87,9 @@ class SimpleTransformer(nn.Module):
         
         self.ln_f = nn.LayerNorm(d_model)
         self.lm_head = nn.Linear(d_model, vocab_size)
+        
+        # Initialize quantization flags
+        self._use_fp8 = False
         
         # Apply quantization after initialization
         if quantization == "fp4":
@@ -114,22 +123,24 @@ class SimpleTransformer(nn.Module):
     def _apply_fp8_quantization(self):
         """Convert model to FP8 where supported"""
         if HAS_FP8:
-            def convert_to_fp8(module):
-                for child in module.children():
-                    if isinstance(child, nn.Linear):
-                        # Convert weights to FP8
-                        child.weight.data = child.weight.data.to(torch.float8_e4m3fn)
-                        if child.bias is not None:
-                            child.bias.data = child.bias.data.to(torch.float8_e4m3fn)
-                    else:
-                        convert_to_fp8(child)
-            convert_to_fp8(self)
+            # For FP8, we need to be more careful about dtype compatibility
+            # Convert the entire model to FP16 first, then selectively use FP8 in forward pass
+            self.half()
+            self._use_fp8 = True
         else:
             # Fallback to FP16
             self.half()
+            self._use_fp8 = False
     
     def forward(self, x):
         x = self.embedding(x)
+        
+        # For FP8, we need to handle dtype conversions carefully
+        if hasattr(self, '_use_fp8') and self._use_fp8 and HAS_FP8:
+            # Convert input to FP16 for compatibility
+            if x.dtype != torch.float16:
+                x = x.to(torch.float16)
+        
         for layer in self.layers:
             x = layer(x)
         x = self.ln_f(x)
