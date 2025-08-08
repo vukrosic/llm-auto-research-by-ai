@@ -2,4 +2,4 @@ torch
 transformers
 datasets
 tqdm
-bitsandbytes
+transformer-engine
